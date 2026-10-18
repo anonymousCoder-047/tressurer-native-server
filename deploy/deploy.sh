@@ -10,6 +10,15 @@ BRANCH="${DEPLOY_BRANCH:-master}"
 cd "$APP_DIR"
 git pull --ff-only origin "$BRANCH"
 
+# .env is not in git — without it there is no DATABASE_URL/JWT_SECRET and
+# pg fails deep inside SCRAM with a cryptic error. Fail fast instead.
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo ">> Created $APP_DIR/.env from .env.example"
+  echo ">> Fill in DATABASE_URL, JWT_SECRET, BASE_URL and the OAuth keys, then re-run the deploy."
+  exit 1
+fi
+
 npm ci --omit=dev
 npm run db:migrate
 
