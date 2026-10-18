@@ -1,8 +1,9 @@
 # Deploying the backend to the Oracle VPS
 
-Push-to-deploy via GitHub Actions: every push to `main` SSHes into the VPS and
-runs `deploy.sh` (pull → `npm ci` → migrate → PM2 reload). This repo is the
-backend itself — the mobile app is a separate repository.
+Push-to-deploy via GitHub Actions: every push to `master` SSHes into the VPS,
+clones the repo to `/opt/tressurer` if needed, then runs `deploy.sh` (pull →
+`npm ci` → migrate → PM2 reload). This repo is the backend itself — the mobile
+app is a separate repository.
 
 ## One-time setup
 
@@ -13,7 +14,7 @@ cd D:\Tressurer\backend
 git init
 git remote add origin https://github.com/<you>/tressurer-backend.git
 git add -A && git commit -m "Initial commit"
-git push -u origin main
+git push -u origin master
 ```
 
 ### 2. Bootstrap the VPS (Ubuntu)

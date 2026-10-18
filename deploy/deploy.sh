@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Deploys the backend on the VPS: pull latest main, install deps, run
-# migrations, reload PM2. Invoked by the GitHub Actions workflow over SSH —
-# can also be run manually:  bash /opt/tressurer/deploy/deploy.sh
+# Deploys the backend on the VPS: pull latest, install deps, run migrations,
+# reload PM2. Invoked by the GitHub Actions workflow over SSH — can also be
+# run manually:  bash /opt/tressurer/deploy/deploy.sh
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRANCH="${DEPLOY_BRANCH:-master}"
 
 cd "$APP_DIR"
-git pull --ff-only origin main
+git pull --ff-only origin "$BRANCH"
 
 npm ci --omit=dev
 npm run db:migrate
