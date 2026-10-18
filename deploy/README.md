@@ -1,7 +1,7 @@
 # Deploying the backend to the Oracle VPS
 
 Push-to-deploy via GitHub Actions: every push to `master` SSHes into the VPS,
-clones the repo to `/opt/tressurer` if needed, then runs `deploy.sh` (pull →
+clones the repo to `~/tressurer` if needed, then runs `deploy.sh` (pull →
 `npm ci` → migrate → PM2 reload). This repo is the backend itself — the mobile
 app is a separate repository.
 
@@ -26,12 +26,12 @@ bash setup-vps.sh https://github.com/<you>/tressurer-backend.git
 sudo certbot --nginx -d tressurer.crovncrm.com
 ```
 
-Then edit `/opt/tressurer/.env` (see `.env.example`) — at minimum:
+Then edit `~/tressurer/.env` (see `.env.example`) — at minimum:
 `DATABASE_URL`, `JWT_SECRET`, `BASE_URL=https://tressurer.crovncrm.com`,
 `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`. Then:
 
 ```bash
-cd /opt/tressurer
+cd ~/tressurer
 npm run db:migrate
 pm2 restart tressurer
 ```

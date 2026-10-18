@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploys the backend on the VPS: pull latest, install deps, run migrations,
 # reload PM2. Invoked by the GitHub Actions workflow over SSH — can also be
-# run manually:  bash /opt/tressurer/deploy/deploy.sh
+# run manually:  bash ~/tressurer/deploy/deploy.sh
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

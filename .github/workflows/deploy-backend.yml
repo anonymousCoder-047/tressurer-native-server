@@ -18,11 +18,9 @@ jobs:
           port: ${{ secrets.VPS_SSH_PORT }}
           script: |
             set -e
-            # First run: nothing is cloned yet — create /opt/tressurer and clone.
-            if [ ! -d /opt/tressurer/.git ]; then
-              sudo mkdir -p /opt/tressurer
-              sudo chown "$USER" /opt/tressurer
-              git clone https://github.com/${{ github.repository }}.git /opt/tressurer
+            # First run: nothing is cloned yet — clone into ~/tressurer.
+            if [ ! -d ~/tressurer/.git ]; then
+              git clone https://github.com/${{ github.repository }}.git ~/tressurer
             fi
-            cd /opt/tressurer
+            cd ~/tressurer
             bash deploy/deploy.sh

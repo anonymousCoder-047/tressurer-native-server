@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO_URL="${1:?Usage: bash setup-vps.sh <backend-git-repo-url>}"
-APP_DIR=/opt/tressurer
+APP_DIR=~/tressurer
 
 # --- System packages --------------------------------------------------------
 sudo apt-get update
@@ -19,8 +19,7 @@ sudo apt-get install -y nodejs
 sudo npm install -g pm2
 
 # --- App (this repo IS the backend) -----------------------------------------
-sudo mkdir -p "$APP_DIR"
-sudo chown "$USER":"$USER" "$APP_DIR"
+mkdir -p "$APP_DIR"
 git clone "$REPO_URL" "$APP_DIR"
 cd "$APP_DIR"
 npm ci --omit=dev
