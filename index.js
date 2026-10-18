@@ -30,7 +30,26 @@ app.set('trust proxy', 1);
 app.disable('etag');
 
 app.use(helmet());
-app.use(cors());
+
+// CORS — only browsers send Origin and enforce this. Native app traffic,
+// curl and server-to-server calls carry no Origin header and always pass.
+// Allowed browser origins come from CORS_ORIGINS (comma-separated); localhost
+// is always allowed for dev (Expo web on :8081 etc.).
+const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || corsOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return cb(null, true);
+      }
+      return cb(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: false,
+  })
+);
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
