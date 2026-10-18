@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# secrets — .env.example stays tracked
+.env
+.env.*
+!.env.example
+
+# uploaded proof files
+uploads/*
+!uploads/.gitkeep
+
+# logs / OS junk
+*.log
+.DS_Store
+Thumbs.db
