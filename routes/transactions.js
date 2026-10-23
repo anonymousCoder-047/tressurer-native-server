@@ -12,7 +12,7 @@ const { UPLOADS_ROOT, resolveUpload, storeUpload, unlinkIfOrphaned } = require('
 const router = express.Router({ mergeParams: true });
 router.use(authRequired);
 
-const TX_FIELDS = ['type', 'amount', 'category', 'description'];
+const TX_FIELDS = ['type', 'amount', 'category', 'description', 'received_from', 'paid_to'];
 
 const MAX_TOTAL_PROOF_BYTES = 25 * 1024 * 1024; // 25 MB across all proofs
 
@@ -201,13 +201,16 @@ router.post(
         for (const [i, e] of entries.entries()) {
           const { rows } = await client.query(
             `INSERT INTO transactions
-               (workspace_id, summary_id, created_by, type, amount, category, description, proof_file_path)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               (workspace_id, summary_id, created_by, type, amount, category, description,
+                received_from, paid_to, proof_file_path)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
               req.workspace.id, summary.id, req.user.id,
               e.type, e.amount,
               req.body.category ?? null, req.body.description ?? null,
+              e.type === 'income' ? (req.body.received_from ?? null) : null,
+              e.type === 'expense' ? (req.body.paid_to ?? null) : null,
               i === 0 ? proofs[0]?.file_path ?? null : null, // legacy mirror on the first
             ]
           );
@@ -269,6 +272,8 @@ router.patch('/:workspaceId/transactions/:transactionId', requireRole(), async (
                amount = COALESCE($4, amount),
                category = COALESCE($5, category),
                description = COALESCE($6, description),
+               received_from = COALESCE($7, received_from),
+               paid_to = COALESCE($8, paid_to),
                updated_at = now()
            WHERE id = $1 AND workspace_id = $2
            RETURNING *`,
@@ -278,6 +283,8 @@ router.patch('/:workspaceId/transactions/:transactionId', requireRole(), async (
             changes.amount != null ? Number(changes.amount) : null,
             changes.category ?? null,
             changes.description ?? null,
+            changes.received_from ?? null,
+            changes.paid_to ?? null,
           ]
         );
         await recalcClosingBalance(client, tx.summary_id);

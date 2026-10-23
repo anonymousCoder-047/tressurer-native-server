@@ -54,11 +54,13 @@ router.post('/:workspaceId/trash/:trashId/restore', requireRole('admin'), async 
 
       await client.query(
         `INSERT INTO transactions
-           (id, workspace_id, summary_id, created_by, type, amount, category, description, proof_file_path, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           (id, workspace_id, summary_id, created_by, type, amount, category, description,
+            received_from, paid_to, proof_file_path, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           p.id, req.workspace.id, p.summary_id, p.created_by, p.type,
           Number(p.amount), p.category ?? null, p.description ?? null,
+          p.received_from ?? null, p.paid_to ?? null,
           p.proof_file_path ?? null, p.created_at, p.updated_at ?? p.created_at,
         ]
       );

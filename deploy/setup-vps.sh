@@ -9,7 +9,7 @@ APP_DIR=~/tressurer
 
 # --- System packages --------------------------------------------------------
 sudo apt-get update
-sudo apt-get install -y nginx git curl ufw
+sudo apt-get install -y nginx git curl ufw postgresql-client
 
 # Node 22 LTS via NodeSource
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -

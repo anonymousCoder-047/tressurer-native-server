@@ -70,10 +70,16 @@ CREATE TABLE IF NOT EXISTS transactions (
   amount          NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
   category        TEXT,
   description     TEXT,
+  received_from   TEXT,   -- counterparty on income entries
+  paid_to         TEXT,   -- counterparty on expense entries
   proof_file_path TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Counterparty fields added after launch — no-ops on fresh installs.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS received_from TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS paid_to TEXT;
 
 -- ---------------------------------------------------------------------------
 -- audit_approval_requests: pending changes proposed by non-admin members.

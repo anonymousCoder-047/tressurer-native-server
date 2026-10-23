@@ -4,7 +4,7 @@ const path = require('path');
 const db = require('../config/db');
 const authRequired = require('../middleware/auth');
 const { requireRole } = require('../middleware/workspace');
-const { logAudit } = require('../utils/audit');
+const { logAudit, recalcClosingBalance } = require('../utils/audit');
 const { sendWorkspaceMail } = require('../utils/mailer');
 const { UPLOADS_ROOT, resolveUpload, sanitizeSegment } = require('../utils/files');
 const { payloadProofPaths } = require('../utils/trash');
@@ -79,6 +79,100 @@ router.post('/', async (req, res, next) => {
     });
 
     res.status(201).json({ workspace: { ...workspace, role: 'admin' } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/workspaces/:workspaceId  { name } — admin only. Renames the
+// workspace. The uploads folder keeps the OLD name on purpose: file_path
+// values stored on proofs and trash payloads include it, so renaming the
+// directory would break every stored path.
+router.patch('/:workspaceId', requireRole('admin'), async (req, res, next) => {
+  try {
+    const name = (req.body.name || '').trim();
+    if (!name || name.length > 120) {
+      return res.status(400).json({ error: 'name is required (max 120 chars)' });
+    }
+    if (name === req.workspace.name) {
+      return res.json({ workspace: req.workspace });
+    }
+
+    const { rows } = await db.query(
+      `UPDATE workspaces SET name = $2 WHERE id = $1 RETURNING *`,
+      [req.workspace.id, name]
+    );
+    await logAudit(db, {
+      workspaceId: req.workspace.id, userId: req.user.id,
+      action: 'workspace.rename', entityType: 'workspace', entityId: req.workspace.id,
+      details: { from: req.workspace.name, to: name },
+    });
+
+    res.json({ workspace: { ...rows[0], role: 'admin' } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/workspaces/:workspaceId/data — admin only. Wipes the books:
+// transactions, proofs, daily summaries, approvals, trash and audit trail —
+// while keeping the workspace itself, its members and email settings. Every
+// referenced upload file is removed from disk.
+router.delete('/:workspaceId/data', requireRole('admin'), async (req, res, next) => {
+  try {
+    const filePaths = new Set();
+    const { rows: proofRows } = await db.query(
+      `SELECT file_path FROM transaction_proofs
+       WHERE transaction_id IN (SELECT id FROM transactions WHERE workspace_id = $1)`,
+      [req.workspace.id]
+    );
+    proofRows.forEach((r) => filePaths.add(r.file_path));
+    const { rows: txRows } = await db.query(
+      `SELECT proof_file_path FROM transactions WHERE workspace_id = $1 AND proof_file_path IS NOT NULL`,
+      [req.workspace.id]
+    );
+    txRows.forEach((r) => filePaths.add(r.proof_file_path));
+    const { rows: trashRows } = await db.query(
+      `SELECT payload FROM trash WHERE workspace_id = $1`,
+      [req.workspace.id]
+    );
+    trashRows.forEach((r) => payloadProofPaths(r.payload).forEach((p) => filePaths.add(p)));
+
+    const counts = await db.withTransaction(async (client) => {
+      // audit_log rows for this wipe survive the delete by logging last —
+      // wipe everything else first, then record the wipe itself.
+      const { rowCount: transactions } = await client.query(
+        `DELETE FROM transactions WHERE workspace_id = $1`, [req.workspace.id]
+      );
+      const { rowCount: summaries } = await client.query(
+        `DELETE FROM daily_summaries WHERE workspace_id = $1`, [req.workspace.id]
+      );
+      const { rowCount: approvals } = await client.query(
+        `DELETE FROM audit_approval_requests WHERE workspace_id = $1`, [req.workspace.id]
+      );
+      const { rowCount: trash } = await client.query(
+        `DELETE FROM trash WHERE workspace_id = $1`, [req.workspace.id]
+      );
+      await client.query(`DELETE FROM audit_log WHERE workspace_id = $1`, [req.workspace.id]);
+      await logAudit(client, {
+        workspaceId: req.workspace.id, userId: req.user.id,
+        action: 'workspace.wipe', entityType: 'workspace', entityId: req.workspace.id,
+        details: { transactions, summaries, approvals, trash },
+      });
+      return { transactions, summaries };
+    });
+
+    // Disk cleanup after the commit — unlink every referenced file, then
+    // sweep the workspace's uploads folder for leftovers.
+    for (const rel of filePaths) {
+      const abs = resolveUpload(rel);
+      if (!abs) continue;
+      await fs.promises.unlink(abs).catch(() => {});
+    }
+    const wsDir = path.join(UPLOADS_ROOT, sanitizeSegment(req.workspace.name));
+    await wipeWorkspaceDir(wsDir).catch(() => {});
+
+    res.json({ deleted: counts });
   } catch (err) {
     next(err);
   }
@@ -224,6 +318,69 @@ router.post('/:workspaceId/summaries/open', requireRole(), async (req, res, next
     });
 
     res.status(summary.created ? 201 : 200).json({ summary: summary.row });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/workspaces/:workspaceId/summaries/:date  { opening_balance?, closing_balance? }
+// Admin-only correction of an opened day's balances. A new opening balance
+// recalculates closing from that day's transactions (closing = opening + net);
+// a closing value is a manual override, kept until the next recalculation.
+router.patch('/:workspaceId/summaries/:date', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { date } = req.params;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    const opening = req.body.opening_balance;
+    const closing = req.body.closing_balance;
+    if (opening == null && closing == null) {
+      return res.status(400).json({ error: 'opening_balance or closing_balance required' });
+    }
+    if ([opening, closing].some((v) => v != null && (!isFinite(v) || Number(v) < 0))) {
+      return res.status(400).json({ error: 'balances must be non-negative numbers' });
+    }
+
+    const summary = await db.withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `SELECT * FROM daily_summaries WHERE workspace_id = $1 AND business_date = $2 FOR UPDATE`,
+        [req.workspace.id, date]
+      );
+      const row = rows[0];
+      if (!row) return null;
+
+      const old = { opening_balance: row.opening_balance, closing_balance: row.closing_balance };
+      if (opening != null) {
+        await client.query(
+          `UPDATE daily_summaries SET opening_balance = $2 WHERE id = $1`,
+          [row.id, Number(opening)]
+        );
+        await recalcClosingBalance(client, row.id);
+      }
+      if (closing != null) {
+        await client.query(
+          `UPDATE daily_summaries SET closing_balance = $2 WHERE id = $1`,
+          [row.id, Number(closing)]
+        );
+      }
+
+      const { rows: updated } = await client.query(
+        `SELECT * FROM daily_summaries WHERE id = $1`, [row.id]
+      );
+      await logAudit(client, {
+        workspaceId: req.workspace.id, userId: req.user.id,
+        action: 'summary.update', entityType: 'daily_summary', entityId: row.id,
+        details: {
+          business_date: date, old,
+          new: { opening_balance: updated[0].opening_balance, closing_balance: updated[0].closing_balance },
+        },
+      });
+      return updated[0];
+    });
+
+    if (!summary) return res.status(404).json({ error: 'No summary for that date' });
+    res.json({ summary });
   } catch (err) {
     next(err);
   }

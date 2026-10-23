@@ -10,6 +10,9 @@ node_modules/
 uploads/*
 !uploads/.gitkeep
 
+# pre-migration database dumps (created on the VPS by deploy.sh)
+deploy/backups/
+
 # logs / OS junk
 *.log
 .DS_Store

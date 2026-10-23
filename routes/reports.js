@@ -35,6 +35,17 @@ router.get('/:workspaceId/reports', requireRole(), async (req, res, next) => {
       [req.workspace.id, from, to]
     );
 
+    const { rows: txRows } = await db.query(
+      `SELECT t.id, s.business_date, t.type, t.amount, t.category, t.description,
+              t.received_from, t.paid_to, u.name AS created_by_name
+       FROM transactions t
+       JOIN daily_summaries s ON s.id = t.summary_id
+       LEFT JOIN users u ON u.id = t.created_by
+       WHERE t.workspace_id = $1 AND s.business_date BETWEEN $2 AND $3
+       ORDER BY s.business_date, t.created_at`,
+      [req.workspace.id, from, to]
+    );
+
     const totals = rows.reduce(
       (acc, r) => ({
         credit: acc.credit + Number(r.credit),
@@ -46,6 +57,7 @@ router.get('/:workspaceId/reports', requireRole(), async (req, res, next) => {
     res.json({
       range: { from, to },
       days: rows,
+      transactions: txRows,
       totals: {
         ...totals,
         opening_balance: rows[0]?.opening_balance ?? 0,
@@ -82,12 +94,45 @@ router.post('/:workspaceId/reports/email', requireRole('admin'), async (req, res
       [req.workspace.id, from, to]
     );
 
+    const { rows: txRows } = await db.query(
+      `SELECT t.id, s.business_date, t.type, t.amount, t.category, t.description,
+              t.received_from, t.paid_to, u.name AS created_by_name
+       FROM transactions t
+       JOIN daily_summaries s ON s.id = t.summary_id
+       LEFT JOIN users u ON u.id = t.created_by
+       WHERE t.workspace_id = $1 AND s.business_date BETWEEN $2 AND $3
+       ORDER BY s.business_date, t.created_at`,
+      [req.workspace.id, from, to]
+    );
+
+    // Counterparty folded into the description, like the app's txLabel.
+    const descLabel = (r) => {
+      const base = r.description ?? '';
+      const party = r.type === 'income' ? r.received_from : r.paid_to;
+      if (!party) return base;
+      const tag = `${r.type === 'income' ? 'Received from' : 'Paid to'} ${party}`;
+      return base ? `${base} · ${tag}` : tag;
+    };
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const ddmmyyyy = (d) => {
+      const [y, m, dd] = (d.toISOString?.().slice(0, 10) ?? String(d).slice(0, 10)).split('-');
+      return `${dd}-${m}-${y}`;
+    };
     const csv = [
       'Date,Opening,Credit,Debit,Closing',
       ...rows.map((r) =>
-        [r.business_date.toISOString?.().slice(0, 10) ?? r.business_date, r.opening_balance, r.credit, r.debit, r.closing_balance]
+        [ddmmyyyy(r.business_date), r.opening_balance, r.credit, r.debit, r.closing_balance]
           .map(esc).join(',')
+      ),
+      '',
+      'Date,Description,Category,Received,Paid,Recorded by',
+      ...txRows.map((r) =>
+        [
+          ddmmyyyy(r.business_date),
+          descLabel(r), r.category ?? '',
+          r.type === 'income' ? r.amount : '', r.type === 'expense' ? r.amount : '',
+          r.created_by_name ?? '',
+        ].map(esc).join(',')
       ),
     ].join('\n');
 
