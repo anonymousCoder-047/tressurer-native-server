@@ -277,19 +277,46 @@ router.get('/:workspaceId/summaries/today', requireRole(), async (req, res, next
   }
 });
 
+// GET /api/workspaces/:workspaceId/summaries/:date — same gate as /today for
+// an arbitrary date, so the entry form can prompt to open any day.
+router.get('/:workspaceId/summaries/:date', requireRole(), async (req, res, next) => {
+  try {
+    const { date } = req.params;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    const { rows } = await db.query(
+      `SELECT * FROM daily_summaries WHERE workspace_id = $1 AND business_date = $2`,
+      [req.workspace.id, date]
+    );
+
+    if (rows[0]) {
+      return res.json({ summary: rows[0], needs_opening_balance: false });
+    }
+    res.json({
+      summary: null,
+      needs_opening_balance: true,
+      previous_closing_balance: await previousClosingBalance(db, req.workspace.id, date),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/workspaces/:workspaceId/summaries/open  { opening_balance? }
-// Records the day's opening balance. Defaults to the previous closing balance;
-// idempotent — a second call returns the existing summary.
+// Records today's opening balance — only today can ever be opened. Opening
+// defaults to the previous closing; idempotent — a second call returns the
+// existing summary.
 router.post('/:workspaceId/summaries/open', requireRole(), async (req, res, next) => {
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const date = new Date().toISOString().slice(0, 10);
     const explicit = req.body.opening_balance;
     if (explicit != null && (!isFinite(explicit) || explicit < 0)) {
       return res.status(400).json({ error: 'opening_balance must be a non-negative number' });
     }
 
     const summary = await db.withTransaction(async (client) => {
-      const previous = await previousClosingBalance(client, req.workspace.id, today);
+      const previous = await previousClosingBalance(client, req.workspace.id, date);
       const opening = explicit != null ? Number(explicit) : Number(previous ?? 0);
 
       const { rows } = await client.query(
@@ -297,14 +324,14 @@ router.post('/:workspaceId/summaries/open', requireRole(), async (req, res, next
          VALUES ($1, $2, $3, $3, $4)
          ON CONFLICT (workspace_id, business_date) DO NOTHING
          RETURNING *`,
-        [req.workspace.id, today, opening, req.user.id]
+        [req.workspace.id, date, opening, req.user.id]
       );
 
       // Lost the race — someone opened the day first. Return that row.
       if (!rows[0]) {
         const existing = await client.query(
           `SELECT * FROM daily_summaries WHERE workspace_id = $1 AND business_date = $2`,
-          [req.workspace.id, today]
+          [req.workspace.id, date]
         );
         return { row: existing.rows[0], created: false };
       }
@@ -312,7 +339,7 @@ router.post('/:workspaceId/summaries/open', requireRole(), async (req, res, next
       await logAudit(client, {
         workspaceId: req.workspace.id, userId: req.user.id,
         action: 'summary.open', entityType: 'daily_summary', entityId: rows[0].id,
-        details: { opening_balance: opening, previous_closing_balance: previous },
+        details: { business_date: date, opening_balance: opening, previous_closing_balance: previous },
       });
       return { row: rows[0], created: true };
     });
